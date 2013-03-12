@@ -95,9 +95,17 @@ define [
 
 
   # Clear everything and refetch when the
-  Auth.on 'change', () ->
-    if not _.isEmpty(_.pick Auth.changed, 'repoUser', 'repoName', 'branch', 'rootPath', 'password')
+  STORED_KEYS = ['repoUser', 'repoName', 'branch', 'rootPath', 'username', 'password']
+  Auth.on 'change', () =>
+    if not _.isEmpty(_.pick Auth.changed, STORED_KEYS)
+      # If the user changed login state then don't reset the desktop
+      return if Auth.get('rateRemaining') and Auth.get('password') and not Auth.previousAttributes()['password']
+
       resetDesktop()
+      # Update session storage
+      for key, value of Auth.toJSON()
+        @sessionStorage?.setItem key, value
+
   #Auth.on 'change:repoName', resetDesktop
   #Auth.on 'change:branch', resetDesktop
   #Auth.on 'change:rootPath', resetDesktop
@@ -107,6 +115,14 @@ define [
   if not Backbone.History.started
     Controller.start()
   Backbone.history.navigate('workspace')
+
+
+  # Load from sessionStorage
+  props = {}
+  _.each STORED_KEYS, (key) ->
+    value = @sessionStorage?.getItem key
+    props[key] = value if value
+  Auth.set props
 
   $signin = jQuery('#sign-in-modal')
   $signin.modal('show')

@@ -8,7 +8,7 @@ require.config
     aloha: 'http://wysiwhat.github.com/Aloha-Editor/src/lib/aloha'
 
     # Change the Stub Auth piece
-    'atc/auth': 'gh-book/auth'
+    'bookish/auth': 'gh-book/auth'
 
     # Github-Specific libraries
     base64: 'lib/github/lib/base64'

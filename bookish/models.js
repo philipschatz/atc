@@ -2,7 +2,7 @@
 (function() {
 
   define(['exports', 'jquery', 'backbone', 'bookish/media-types', 'i18n!bookish/nls/strings'], function(exports, jQuery, Backbone, MEDIA_TYPES, __) {
-    var ALL_CONTENT, AllContent, BaseBook, BaseContent, Deferrable, DeferrableCollection, SearchResults;
+    var ALL_CONTENT, AllContent, BaseBook, BaseContent, CONTENT_COMPARATOR, Deferrable, DeferrableCollection;
     BaseContent = Backbone.Model.extend({
       initialize: function() {
         if (!this.mediaType) {
@@ -13,10 +13,7 @@
         }
       }
     });
-    AllContent = Backbone.Collection.extend({
-      model: BaseContent
-    });
-    ALL_CONTENT = new AllContent();
+    ALL_CONTENT = null;
     Deferrable = Backbone.Model.extend({
       loaded: function(flag) {
         var deferred,
@@ -71,9 +68,7 @@
           deferred = jQuery.Deferred();
           deferred.resolve(this);
           this._promise = deferred.promise();
-          this.set({
-            _done: true
-          });
+          this._done = true;
         }
         if (!this._promise || 'rejected' === this._promise.state()) {
           this._promise = this.fetch({
@@ -106,6 +101,13 @@
         });
       }
     });
+    AllContent = DeferrableCollection.extend({
+      model: BaseContent,
+      initialize: function() {
+        return this.loaded(true);
+      }
+    });
+    ALL_CONTENT = new AllContent();
     exports.FilteredCollection = Backbone.Collection.extend({
       defaults: {
         collection: null
@@ -145,18 +147,21 @@
         this.add(this.collection.filter(function(model) {
           return _this.isMatch(model);
         }));
-        this.collection.on('add', function(model) {
+        this.listenTo(this.collection, 'add', function(model) {
           if (_this.isMatch(model)) {
             return _this.add(model);
           }
         });
-        this.collection.on('remove', function(model) {
+        this.listenTo(this.collection, 'remove', function(model) {
           return _this.remove(model);
         });
-        this.collection.on('reset', function(model) {
-          return _this.reset();
+        this.listenTo(this.collection, 'reset', function(model, options) {
+          _this.reset();
+          return _this.add(_this.collection.filter(function(model) {
+            return _this.isMatch(model);
+          }));
         });
-        return this.collection.on('change', function(model) {
+        return this.listenTo(this.collection, 'change', function(model) {
           if (_this.isMatch(model)) {
             return _this.add(model);
           } else {
@@ -166,7 +171,7 @@
       }
     });
     BaseContent = Deferrable.extend({
-      mediaType: 'text/x-module',
+      mediaType: 'application/vnd.org.cnx.module',
       defaults: {
         title: null,
         subjects: [],
@@ -177,7 +182,7 @@
       }
     });
     BaseBook = Deferrable.extend({
-      mediaType: 'text/x-collection',
+      mediaType: 'application/vnd.org.cnx.collection',
       defaults: {
         manifest: null,
         navTreeStr: '[]'
@@ -259,7 +264,7 @@
                 contentModel = _this.manifest.add({
                   id: node.id,
                   title: node.title,
-                  mediaType: 'text/x-module'
+                  mediaType: 'application/vnd.org.cnx.module'
                 });
               }
               if (node.children) {
@@ -308,35 +313,30 @@
         return this.set('navTreeStr', JSON.stringify(navTree));
       }
     });
-    SearchResults = DeferrableCollection.extend({
-      defaults: {
-        parameters: []
-      },
-      comparator: function(a, b) {
-        var A, B;
-        A = a.mediaType || '';
-        B = b.mediaType || '';
-        if (B < A) {
-          return -1;
-        }
-        if (A < B) {
-          return 1;
-        }
-        A = a.get('title') || a.id || '';
-        B = b.get('title') || b.id || '';
-        if (B < A) {
-          return 1;
-        }
-        if (A < B) {
-          return -1;
-        }
-        return 0;
+    CONTENT_COMPARATOR = function(a, b) {
+      var A, B;
+      A = a.mediaType || '';
+      B = b.mediaType || '';
+      if (B < A) {
+        return -1;
       }
-    });
-    MEDIA_TYPES.add('text/x-module', {
+      if (A < B) {
+        return 1;
+      }
+      A = a.get('title') || a.id || '';
+      B = b.get('title') || b.id || '';
+      if (B < A) {
+        return 1;
+      }
+      if (A < B) {
+        return -1;
+      }
+      return 0;
+    };
+    MEDIA_TYPES.add('application/vnd.org.cnx.module', {
       constructor: BaseContent
     });
-    MEDIA_TYPES.add('text/x-collection', {
+    MEDIA_TYPES.add('application/vnd.org.cnx.collection', {
       constructor: BaseBook
     });
     exports.BaseContent = BaseContent;
@@ -345,7 +345,8 @@
     exports.DeferrableCollection = DeferrableCollection;
     exports.ALL_CONTENT = ALL_CONTENT;
     exports.MEDIA_TYPES = MEDIA_TYPES;
-    exports.SearchResults = SearchResults;
+    exports.CONTENT_COMPARATOR = CONTENT_COMPARATOR;
+    exports.WORKSPACE = ALL_CONTENT;
     return exports;
   });
 

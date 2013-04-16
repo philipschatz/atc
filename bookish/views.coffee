@@ -1,16 +1,16 @@
-# Copyright (c) 2013 Rice University
+# <!-- Copyright (c) 2013 Rice University
 #
 # This software is subject to the provisions of the GNU AFFERO GENERAL PUBLIC LICENSE Version 3.0 (AGPL).
 # See LICENSE.txt for details.
 
-# # Backbone Views
+# Backbone Views
+# =======
 # Most views have the following properties:
 #
 # 1. Load a Handlebar template using the `hbs` plugin (see `define` below)
 # 2. Attach listeners to the corresponding model (see `initialize` method and `events:`)
 # 3. Attach jQuery listeners to the rendered template (see `onRender` methods)
 # 4. Navigate to a different "page" (see `Controller.*` in the `jQuery.on` handlers)
-#
 
 #
 define [
@@ -21,19 +21,25 @@ define [
   'jquery'
   'aloha'
   'bookish/controller'
+  'bookish/models'
+  'bookish/media-types'
   './languages'
   # Load the Handlebar templates
   'hbs!bookish/views/content-edit'
   'hbs!bookish/views/search-box'
   'hbs!bookish/views/search-results'
   'hbs!bookish/views/search-results-item'
+  'hbs!bookish/views/dnd-handle'
   'hbs!bookish/views/modal-wrapper'
   'hbs!bookish/views/edit-metadata'
   'hbs!bookish/views/edit-roles'
   'hbs!bookish/views/language-variants'
   'hbs!bookish/views/aloha-toolbar'
   'hbs!bookish/views/sign-in-out'
+  'hbs!bookish/views/add'
+  'hbs!bookish/views/add-item'
   'hbs!bookish/views/book-edit'
+  'hbs!bookish/views/book-edit-node'
   # Load internationalized strings
   'i18n!bookish/nls/strings'
   # `bootstrap` and `select2` add to jQuery and don't export anything of their own
@@ -42,7 +48,57 @@ define [
   'select2'
   # Include CSS icons used by the toolbar
   'css!font-awesome'
-], (exports, _, Backbone, Marionette, jQuery, Aloha, Controller, Languages, CONTENT_EDIT, SEARCH_BOX, SEARCH_RESULT, SEARCH_RESULT_ITEM, DIALOG_WRAPPER, EDIT_METADATA, EDIT_ROLES, LANGUAGE_VARIANTS, ALOHA_TOOLBAR, SIGN_IN_OUT, BOOK_EDIT, __) ->
+  # Include the main CSS file
+  'less!bookish'
+], (exports, _, Backbone, Marionette, jQuery, Aloha, Controller, Models, MEDIA_TYPES, Languages, CONTENT_EDIT, SEARCH_BOX, SEARCH_RESULT, SEARCH_RESULT_ITEM, DND_HANDLE, DIALOG_WRAPPER, EDIT_METADATA, EDIT_ROLES, LANGUAGE_VARIANTS, ALOHA_TOOLBAR, SIGN_IN_OUT, ADD_VIEW, ADD_ITEM_VIEW, BOOK_EDIT, BOOK_EDIT_NODE, __) ->
+
+
+  # Drag and Drop Behavior
+  # -------
+  #
+  # Several views allow content to be dragged around.
+  # Each item that is draggable **must** contain 3 DOM attributes:
+  #
+  # - `data-content-id`:    The unique id of the piece of content (it can be a path)
+  # - `data-media-type`:    The mime-type of the content being dragged
+  # - `data-content-title`: A  human-readable title for the content
+  #
+  # In addition it may contain the following attributes:
+  #
+  # - `data-drag-operation="copy"`: Specifies the CSS to add a "+" when dragging
+  #                                 hinting that the element will not be removed.
+  #                                 (For example, content in a search result)
+  #
+  # Additionally, each draggable element should not contain any text children
+  # so CSS can hide children and properly style the cloned element that is being dragged.
+  _EnableContentDragging = (model, $el) ->
+    $el.data 'editor-model', model
+    $el.draggable
+      addClasses: false
+      revert: 'invalid'
+      # Ensure the handle is on top (zindex) and not bound to be constrained inside a div visually
+      appendTo: 'body'
+      # Place the little handle right next to the mouse
+      cursorAt:
+        top: 0
+        left: 0
+      helper: (evt) ->
+        title = model.get('title') or model.dereference().get('title') or ''
+        shortTitle = title
+        shortTitle = title.substring(0, 20) + '...' if title.length > 20
+
+        # If the content is a pointer to a piece of content (`BookTocNode`)
+        # then use the actual content's mediaType
+        mediaType = model.dereference().mediaType
+
+        # Generate the handle div using a template
+        $handle = jQuery DND_HANDLE
+          id: model.id
+          mediaType: mediaType
+          title: title
+          shortTitle: shortTitle
+        return $handle
+
 
   # **FIXME:** Move this delay into a common module so the mock AJAX code can use them too
   DELAY_BEFORE_SAVING = 3000
@@ -91,7 +147,8 @@ define [
     LANGUAGES.push(value)
 
 
-  # ## Search Result Views (workspace)
+  # Search Result Views (workspace)
+  # -------
   #
   # A list of search results (stubs of models only containing an icon, url, title)
   # need a generic view for an item.
@@ -101,21 +158,50 @@ define [
   exports.SearchResultsItemView = Marionette.ItemView.extend
     tagName: 'tr'
     template: SEARCH_RESULT_ITEM
+    initialize: ->
+      @listenTo @model, 'change', => @render()
     onRender: ->
       @$el.on 'click', => Controller.editModel(@model)
+      # Add DnD options to content
+      $content = @$el.children('*[data-media-type]')
 
-    # Add the hasChanged bit to the resulting JSON so the template can render an asterisk
-    # if this piece of content has unsaved changes
-    templateHelpers: ->
-      # Figure out if the model was just fetched (all the changed attributes used to be 'undefined')
-      # or if the attributes did actually change
+      # Since we use jqueryui's draggable which is loaded when Aloha loads
+      # delay until Aloha is finished loading
+      Aloha.ready =>
 
-      # Delete any properties that were null before
-      changes = @model.changedAttributes() or {}
-      (delete changes[attribute] if not @model.previous(attribute)) for attribute of changes
+        _EnableContentDragging(@model, $content)
 
-      # If there was anything that was actually changed (not null before) then mark the save button.
-      return {hasChanged: _.keys(changes).length}
+        # Figure out which mediaTypes can be dropped onto each element
+        $content.each (i, el) =>
+          $el = jQuery(el)
+
+          ModelType = MEDIA_TYPES.get @model.mediaType
+          validSelectors = _.map ModelType::accepts(), (mediaType) -> "*[data-media-type=\"#{mediaType}\"]"
+          validSelectors = validSelectors.join ','
+
+          if validSelectors
+            $el.droppable
+              greedy: true
+              addClasses: false
+              accept: validSelectors
+              activeClass: 'editor-drop-zone-active'
+              hoverClass: 'editor-drop-zone-hover'
+              drop: (evt, ui) =>
+                $drag = ui.draggable
+                $drop = jQuery(evt.target)
+
+                # Find the model representing the id that was dragged
+                model = $drag.data 'editor-model'
+                drop = $drop.data 'editor-model'
+                # Sanity-check before dropping:
+                # Dereference if this is a pointer
+                if drop.accepts().indexOf(model.mediaType) < 0
+                  model = model.dereference()
+                throw 'INVALID_DROP_MEDIA_TYPE' if drop.accepts().indexOf(model.mediaType) < 0
+
+                # Delay the call so jQuery.droppable has time to clean up before the DOM changes
+                delay = => drop.addChild model
+                setTimeout delay, 10
 
 
   # This can also be thought of as the Workspace view
@@ -123,9 +209,6 @@ define [
     template: SEARCH_RESULT
     itemViewContainer: 'tbody'
     itemView: exports.SearchResultsItemView
-
-    initialize: ->
-      @listenTo @collection, 'reset',   => @render()
 
   # The search box. Changing the text will cause the underlying collection to filter
   # and fire off `add/remove` events.
@@ -152,7 +235,7 @@ define [
 
     initialize: ->
 
-      # Update the view when the content is done loading
+      # Update the view when the content is done loading (remove progress bar)
       @listenTo @model, 'change:_done', (model, value, options) => @render()
 
       @listenTo @model, "change:#{@modelKey}", (model, value, options) =>
@@ -198,7 +281,8 @@ define [
 
 
 
-  # ## Edit Content Body
+  # Edit Content Body
+  # -------
   exports.ContentEditView = exports.AlohaEditView.extend
     # **NOTE:** This template is not wrapped in an element
     template: CONTENT_EDIT
@@ -222,7 +306,8 @@ define [
       Aloha.ready =>
         @$el.removeClass('disabled')
 
-  # ### Content Metadata
+  # Content Metadata
+  # -------
 
   exports.MetadataEditView = Marionette.ItemView.extend
     template: EDIT_METADATA
@@ -380,7 +465,8 @@ define [
 
 
 
-  # ## DialogWrapper
+  # Dialog Wrapper
+  # -------
   # This class wraps a view in a div and only causes changes when
   # the 'Save' button is clicked.
   #
@@ -412,7 +498,8 @@ define [
             alert('Something went wrong when saving: ' + res)
 
 
-  # ## Auth View
+  # Default Auth View
+  # -------
   # The top-right of each page should have either:
   #
   # 1. a Sign-up/Login link if not logged in
@@ -422,11 +509,55 @@ define [
   exports.AuthView = Marionette.ItemView.extend
     template: SIGN_IN_OUT
     events:
-      'click #sign-in': 'signIn'
-      'submit #sign-out': 'signOut'
-    onRender: ->
+      'click #sign-in':       'signIn'
+      'click #sign-out':      'signOut'
+      'click #save-content':  'saveContent'
+
+    initialize: ->
+      @dirtyModels = new Backbone.Collection()
+      # Sort by `id` so new models are saved first.
+      # This way their id's change and their references (in books and Folders)
+      # will be updated before the Book/Folder is saved.
+      @dirtyModels.comparator = 'id'
+
+      # Bind a function to the window if the user tries to navigate away from this page
+      beforeUnload = =>
+        return 'You have unsaved changes. Are you sure you want to leave this page?' if @hasChanged
+      jQuery(window).on 'beforeunload', beforeUnload
+
       @listenTo @model, 'change', => @render()
       @listenTo @model, 'change:userid', => @render()
+
+      # Listen to all changes made on Content so we can update the save button
+      @listenTo Models.ALL_CONTENT, 'change:_isDirty', (model, b,c) =>
+        # Figure out if the model was just fetched (all the changed attributes used to be 'undefined')
+        # or if the attributes did actually change
+        if model.get('_isDirty')
+          @dirtyModels.add model
+        else
+          @dirtyModels.remove model
+
+      @listenTo Models.ALL_CONTENT, 'change:treeNode add:treeNode remove:treeNode', (model, b,c) =>
+        @dirtyModels.add model
+
+      @listenTo Models.ALL_CONTENT, 'add', (model) => @dirtyModels.add model if model.get('_isDirty')
+
+      @listenTo @dirtyModels, 'add reset', (model, b,c) =>
+        @hasChanged = true
+        $save = @$el.find '#save-content'
+        $save.removeClass('disabled')
+        $save.addClass('btn-primary')
+
+      @listenTo @dirtyModels, 'remove', (model, b,c) =>
+        if @dirtyModels.length == 0
+          @hasChanged = false
+          $save = @$el.find '#save-content'
+          $save.addClass('disabled')
+          $save.removeClass('btn-primary')
+
+    onRender: ->
+      # Enable tooltips
+      @$el.find('*[title]').tooltip()
 
     signIn: ->
       # The browser will go to the login page because `#sign-in` is a link
@@ -435,52 +566,262 @@ define [
     # Before it does, update the model
     signOut: -> @model.signOut()
 
-  # ## Book Editing
+    # Save each model in sequence.
+    # **FIXME:** This should be done in a commit batch
+    saveContent: ->
+      return alert 'You need to Sign In (and make sure you can edit) before you can save changes' if not @model.get 'id'
+      $save = @$el.find('#save-progress-modal')
+      $saving     = $save.find('.saving')
+      $alertError = $save.find('.alert-error')
+      $successBar = $save.find('.progress > .bar.success')
+      $errorBar   = $save.find('.progress > .bar.error')
+      $label = $save.find('.label')
 
+      total = @dirtyModels.length
+      errorCount = 0
+      finished = false
 
-  # Use this to generate HTML with extra divs for Drag-and-Drop zones.
-  #
-  # To update the Book model when a `drop` occurs we convert the new DOM into
-  # a JSON tree and set it on the model.
-  #
-  # **FIXME:** Instead of a JSON tree this Model should be implemented using a Tree-Like Collection that has a `.toJSON()` and methods like `.insertBefore()`
-  exports.BookEditView = Marionette.ItemView.extend
-    template: BOOK_EDIT
+      recSave = =>
+        $successBar.width(((total - @dirtyModels.length - errorCount) * 100 / total) + '%')
+        $errorBar.width((  errorCount                                 * 100 / total) + '%')
+
+        if @dirtyModels.length == 0
+          if errorCount == 0
+            finished = true
+            $save.modal('hide')
+          else
+            $alertError.removeClass 'hide'
+
+        else
+          model = @dirtyModels.first()
+          $label.text(model.get('title'))
+
+          # Clear the changed bit since it is saved.
+          #     delete model.changed
+          #     saving = true; recSave()
+          saving = model.save null,
+              success: =>
+                # Clear the dirty bit for the model
+                model.set {_isDirty:false}
+                recSave()
+              error: -> errorCount += 1
+          if not saving
+            console.log "Skipping #{model.id} because it is not valid"
+            recSave()
+
+      $alertError.addClass('hide')
+      $saving.removeClass('hide')
+      $save.modal('show')
+      recSave()
+
+      # Only show the 'Saving...' alert box if the save takes longer than 5 seconds
+      setTimeout(->
+        if total and (not finished or errorCount)
+          $save.modal('show')
+          $alertError.removeClass('hide')
+          $saving.addClass('hide')
+      , 2000)
+
+  AddItemView = Marionette.ItemView.extend
+    template: ADD_ITEM_VIEW
+    tagName: 'li'
     events:
-      'click .edit-content': 'editModel'
-      'click #nav-close': 'closeView'
-      'click #add-section': 'prependSection'
-      'click #add-content': 'prependContent'
+      'click button': 'addItem'
+
+    addItem: ->
+      ContentType = @model.get('modelType')
+      content = new ContentType()
+      Models.WORKSPACE.add content
+      # Begin editing an item as soon as it is added.
+      # Some content (like Books and Folders) do not have an `editAction`
+      content.editAction?()
+
+  exports.AddView = Marionette.CompositeView.extend
+    template: ADD_VIEW
+    itemView: AddItemView
+    itemViewContainer: '.btn-group > ul'
+    tagName: 'span'
+
+
+  # Book Editing
+  # -------
+  # The book editor has a tree of node views (nested `Marionette.ContainerView`)
+  # with Drag and Drop handling restricted by `mediaType`.
+
+  BookEditNodeView = Marionette.CompositeView.extend
+    template: BOOK_EDIT_NODE
+    tagName: 'li'
+    itemViewContainer: '> ol'
+    events:
+      # The `.editor-node-body` is needed because `li` elements render differently
+      # when there is a space between `<li>` and the first child.
+      # `.editor-node-body` ensures there is never a space.
+      'click > .editor-node-body > .editor-expand-collapse': 'toggleExpanded'
+      'click > .editor-node-body > .no-edit-action': 'toggleExpanded'
+      'click > .editor-node-body > .edit-action': 'editAction'
+      'click > .editor-node-body > .edit-settings': 'editSettings'
+
+    # Toggle expanded/collapsed in the View
+    # -------
+    #
+    # The first time a node is rendered it is collapsed so we lazily load the
+    # `ItemView` children.
+    #
+    # Initially, the node is collapsed and the following occurs:
+    #
+    # 1. `@render()` calls `@_renderChildren()`
+    # 2. Since `@isExpanded == false` the children are not rendered
+    #
+    # When the node is expanded:
+    #
+    # 1. `@isExpanded` is set to `true`
+    # 2. `@render()` is called and calls `@_renderChildren()`
+    # 3. Since `@isExpanded == true` the children are rendered and attached to the DOM
+    # 4. `@hasRendered` is set to `true` so we know not to generate the children again
+    #
+    #
+    # When an expanded node is collapsed:
+    #
+    # 1. `@isExpanded` is set to `false`
+    # 2. A CSS class is set on the `<li>` item to hide children
+    # 3. CSS rules hide the children and change the expand/collapse icon
+    #
+    # When a node that was expanded and collapsed is re-expanded:
+    #
+    # 1. `@isExpanded` is set to `true`
+    # 2. Since `@hasRendered == true` there is no need to call `@render()`
+    # 3. The CSS class is removed to show the children again
+
+    isExpanded: false
+    hasRendered: false
+
+    # Called from UI when user clicks the collapse/expando buttons
+    toggleExpanded: -> @expand !@isExpanded
+
+    # Pass in `false` to collapse
+    expand: (@isExpanded) ->
+      @$el.toggleClass 'editor-node-expanded', @isExpanded
+      # (re)render the model and children if the node is expanded
+      # and has not been rendered yet.
+      if @isExpanded and !@hasRendered
+        @render()
+
+    # From `Marionette.CompositeView`.
+    # Added check to only render when the model `@isExpanded`
+    _renderChildren: ->
+      if @isRendered
+        if @isExpanded
+          Marionette.CollectionView.prototype._renderChildren.call(@)
+          this.triggerMethod('composite:collection:rendered')
+        # Remember that the children have been rendered already
+        @hasRendered = @isExpanded
+
+
+    # Perform the edit action and then expand the node to show children.
+    editAction: -> @model.editAction(); @expand(true)
+
+    editSettings: ->
+      if @model != @model.dereference()
+        contentModel = @model.dereference()
+        originalTitle = contentModel?.get('title') or @model.get 'title'
+        newTitle = prompt 'Edit Title. Enter a single "-" to delete this node in the ToC', originalTitle
+        if '-' == newTitle
+          @model.parent?.children()?.remove @model
+        else if newTitle == contentModel?.get('title')
+          @model.unset 'title'
+        else if newTitle
+          @model.set 'title', newTitle
+      else
+        originalTitle = @model.get 'title'
+        newTitle = prompt 'Edit Title. Enter a single "-" to delete this node in the ToC', originalTitle
+        if '-' == newTitle
+          @model.parent?.children()?.remove @model
+        else
+          @model.set 'title', newTitle if newTitle
+
 
     initialize: ->
-      @listenTo @model, 'all', => @render()
-    prependSection: -> @model.prependNewContent {title: 'Untitled Section'}
-    prependContent: -> @model.prependNewContent {title: 'Untitled Content'}, 'text/x-module'
+      # grab the child collection from the parent model
+      # so that we can render the collection as children
+      # of this parent node
+      @collection = @model.children()
 
-    closeView: -> Controller.hideSidebar()
+      @listenTo @model, 'all', (name, model, collection, options) =>
+        return if model != @model
+        # Reduce the number of re-renderings that occur by filtering on the
+        # type of event.
+        # **FIXME:** Just listen to the relevant events
+        switch name
+          when 'change' then return
+          when 'change:title' then @render()
+          when 'change:treeNode' then return
+          else return
 
-    editModel: (evt) ->
-      evt.preventDefault()
-      href = jQuery(evt.target).parents('li').first().children('span').attr 'data-id'
-      # The id may point to an element inside the HTML document
-      [path, id] = href.split('#')
-      model = @model.manifest.get path
-      Controller.editModel model, id
+      if @collection
+        # If the children drop to/from 0 rerender so the (+)/(-) expandos are visible
+        @listenTo @collection, 'add',    =>
+          if @collection.length == 1
+            @expand(true)
+        @listenTo @collection, 'remove', =>
+          if @collection.length == 0
+            @render()
+        @listenTo @collection, 'reset',  => @render()
+
+        @listenTo @collection, 'all', (name, model, collection, options=collection) =>
+          # Reduce the number of re-renderings that occur by filtering on the
+          # type of event.
+          # **FIXME:** Just listen to the relevant events
+          switch name
+            when 'change' then return
+            when 'change:title' then return
+            when 'change:treeNode' then return
+            else @render() if @model == options?.parent
+
+      # If the content title changes and we have not overridden the title
+      # rerender the node
+      if @model != @model.dereference()
+        contentModel = @model.dereference()
+        @listenTo contentModel, 'change:title', (newTitle, model, options) =>
+          @render() if !@model.get 'title'
+
+
+    templateHelpers: ->
+      return {
+        children: @collection?.length
+        # Some rendered nodes are pointers to pieces of content. include the content.
+        content: @model.dereference().toJSON() if @model != @model.dereference()
+        editAction: !!@model.editAction
+        parent: !!@model.parent
+      }
+
+
     onRender: ->
+
+      @$el.attr 'data-media-type', @model.mediaType
+      $body = @$el.children '.editor-node-body'
+
       # Since we use jqueryui's draggable which is loaded when Aloha loads
       # delay until Aloha is finished loading
       Aloha.ready =>
-        model = @model # keep reference to model for drop event
-        @$el.find('.editor-node').draggable
-          revert: 'invalid'
-          helper: (evt) ->
-            $clone = jQuery(evt.target).clone(true)
-            $clone.children('ol').remove()
-            $clone
-        @$el.find('.editor-drop-zone').droppable
-          accept: '.editor-node'
+        _EnableContentDragging(@model, $body.children '*[data-media-type]')
+
+        validSelectors = _.map @model.accepts(), (mediaType) -> "*[data-media-type=\"#{mediaType}\"]"
+        validSelectors = validSelectors.join ','
+
+        expandTimeout = null
+        expandNode = => @toggleExpanded(true) if @collection?.length > 0
+
+        $body.children('.editor-drop-zone').add(@$el.children('.editor-drop-zone')).droppable
+          greedy: true
+          addClasses: false
+          accept: validSelectors
           activeClass: 'editor-drop-zone-active'
           hoverClass: 'editor-drop-zone-hover'
+          # If hovering over a node that has children but is not expanded
+          # Expand after a period of time.
+          # over: => expandTimeout = setTimeout(expandNode, DELAY_BEFORE_SAVING)
+          # out: => clearTimeout expandTimeout
+
           drop: (evt, ui) =>
             # Possible drop cases:
             #
@@ -490,31 +831,62 @@ define [
 
             $drag = ui.draggable
             $drop = jQuery(evt.target)
-            $root = $drop.parents('nav[data-type="toc"]')
-            $li = $drop.parent()
 
             # Perform all of these DOM cleanup events once jQueryUI is finished with its events
             delay = =>
-              $drag.parent().remove() if $drag.parent().children().length == 1
+
+              drag = $drag.data('editor-model')
+
+              # Ignore if you drop on yourself or your children
+              testNode = @model
+              while testNode
+                return if (drag.cid == testNode.cid) or (testNode.id and drag.id == testNode.id)
+                testNode = testNode.parent
 
               if $drop.hasClass 'editor-drop-zone-before'
-                # If `$drag` is the only child in a `<ol>` then remove the `ol`
-                $drag.insertBefore $li
-              if $drop.hasClass 'editor-drop-zone-after'
-                $drag.insertAfter $li
-              if $drop.hasClass 'editor-drop-zone-in'
-                # create an `ol` in the drop target if necessary
-                $li.append '<ol></ol>' if not $li.children('ol')[0]
-                $ol = $li.children('ol')
-                $ol.append $drag
+                col = @model.parent.children()
+                index = col.indexOf(@model)
+                @model.parent.addChild drag, index
+              else if $drop.hasClass 'editor-drop-zone-after'
+                col = @model.parent.children()
+                index = col.indexOf(@model)
+                @model.parent.addChild drag, index + 1
+              else if $drop.hasClass 'editor-drop-zone-in'
+                @model.addChild drag
+              else
+                throw 'BUG. UNKNOWN DROP CLASS'
 
-              # Serialize it back to HTML
-              # Remove the drag node (a clone of the element that's being dragged)
-              $root.find('.ui-draggable-dragging').remove()
-              $root.find('*').removeClass('editor-drop-zone-in ui-droppable ui-draggable')
+            setTimeout delay, 100
 
-              @model.set 'navTreeStr', JSON.stringify @model.parseNavTree($root).children
+    appendHtml: (cv, iv, index)->
+      $container = @getItemViewContainer(cv)
+      $prevChild = $container.children().eq(index)
+      if $prevChild[0]
+        iv.$el.insertBefore($prevChild)
+      else
+        $container.append(iv.el)
 
-            setTimeout delay, 10
+
+  # Use this to generate HTML with extra divs for Drag-and-Drop zones.
+  #
+  # To update the Book model when a `drop` occurs we convert the new DOM into
+  # a JSON tree and set it on the model.
+  #
+  # **FIXME:** Instead of a JSON tree this Model should be implemented using a Tree-Like Collection that has a `.toJSON()` and methods like `.insertBefore()`
+  exports.BookEditView = Marionette.CompositeView.extend
+    template: BOOK_EDIT
+    itemView: BookEditNodeView
+    itemViewContainer: '> nav > ol'
+
+    initialize: ->
+      @collection = @model.children()
+
+    appendHtml: (cv, iv, index)->
+      $container = @getItemViewContainer(cv)
+      $prevChild = $container.children().eq(index)
+      if $prevChild[0]
+        iv.$el.insertBefore($prevChild)
+      else
+        $container.append(iv.el)
 
   return exports

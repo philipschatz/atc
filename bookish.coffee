@@ -1,10 +1,11 @@
-# Copyright (c) 2013 Rice University
+# <!-- Copyright (c) 2013 Rice University
 #
 # This software is subject to the provisions of the GNU AFFERO GENERAL PUBLIC LICENSE Version 3.0 (AGPL).
-# See LICENSE.txt for details.
+# See LICENSE.txt for details. -->
 
-# # Application Root
-# This is the start of the application. Steps:
+# Application Root
+# =======
+# This is the start of an abstract bookish application. Steps:
 #
 # 1. Load dependencies (JS/CSS/JSON)
 # 2. Register client-side routes
@@ -22,22 +23,18 @@ define [
   'aloha'
   'bookish/auth'
   'bookish/controller'
-  'css!bookish'
 ], (jQuery, _, Backbone, Marionette, Aloha, Auth, Controller) ->
 
-  # # Application Code
-
-  # ## Authenticated User
-  # Find out whether the user is authenticated
-  #
-  #     Auth.fetch()
+  # Application Code
+  # =======
 
   # Begin listening to route changes
   # and load the initial views based on the URL.
   Controller.start()
 
 
-  # # Various HACKS
+  # Various HACKS
+  # =======
   # These cross over many modules and do not have a better home than here.
 
   # ## Global Variables like jQuery
@@ -56,7 +53,8 @@ define [
   jQuery.curCSS = jQuery.css
 
 
-  # # Hash tags in links
+  # Hash tags in links
+  # =======
   # Code should use the `Controller` module to change the page
   # instead of relying on the URL
   #

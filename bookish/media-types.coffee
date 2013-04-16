@@ -1,9 +1,10 @@
-# Copyright (c) 2013 Rice University
+# <!-- Copyright (c) 2013 Rice University
 #
 # This software is subject to the provisions of the GNU AFFERO GENERAL PUBLIC LICENSE Version 3.0 (AGPL).
-# See LICENSE.txt for details.
+# See LICENSE.txt for details. -->
 
-# ## Extension point for editing Custom Media Types
+# Extension point for handling various Media Types (Content)
+# =======
 #
 # Several languages translate to HTML (Markdown, ASCIIDoc, cnxml).
 #
@@ -16,16 +17,17 @@
 #
 # Entries in here contain a mapping from mime-type to an object that provides:
 #
-# - A constructor for instantiating new content
-# - An `.editAction` which will change the page to become an edit page
+# - `.constructor` for instantiating a new `Backbone.Model` for this media type
+# - `.editAction` which will change the page to become an edit page
+# - `.accepts` hash of `mediaType -> addOperation` that is used for Drag-and-Dropping onto the content in the workspace list
 #
-# Different plugins (Markdown, ASCIIDoc, cnxml) can add themselves to this
+# Different plugins (EPUB OPF, XHTML, Markdown, ASCIIDoc, cnxml) can add themselves to this
 define ['backbone'], (Backbone) ->
 
   # Collection used for storing the various mediaTypes.
-  # When something registers a new mediaType views can update
+  # When something registers a "New... mediaType" view can update
   MediaTypes = Backbone.Collection.extend
-    # Just a glorified JSON holder
+    # Just a glorified JSON holder (that cannot `sync`)
     model: Backbone.Model.extend
       sync: -> throw 'This model cannot be syncd'
     sync: -> throw 'This model cannot be syncd'
@@ -34,18 +36,17 @@ define ['backbone'], (Backbone) ->
   MEDIA_TYPES = new MediaTypes()
 
   return {
-    add: (mediaType, config) ->
-      prev = MEDIA_TYPES.get(mediaType)
-      throw 'BUG: You must at least specify a constructor!' if not config.constructor and not prev
-      MEDIA_TYPES.add _.extend(config, {id: mediaType}), {merge:true}
+    add: (modelType) ->
+      mediaType = modelType::mediaType
+      MEDIA_TYPES.add {id: mediaType, modelType: modelType}, {merge:true}
 
     get: (mediaType) ->
-      type = MEDIA_TYPES.get mediaType
-      if not type
+      modelType = MEDIA_TYPES.get mediaType
+      if not modelType
         console.error "ERROR: No editor for media type '#{mediaType}'. Help out by writing one!"
-        return MEDIA_TYPES.models[0]
+        modelType = MEDIA_TYPES.models[0]
         #     throw 'BUG: mediaType not found'
-      return _.omit(type.toJSON(), 'id')
+      return modelType.get('modelType')
 
     # Provides a list of all registered media types
     list: ->

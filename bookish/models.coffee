@@ -252,7 +252,8 @@ define ['exports', 'jquery', 'backbone', 'bookish/media-types', 'i18n!bookish/nl
       copyrightHolders: []
       # Default language for new content is the browser's language
       language: (navigator?.userLanguage or navigator?.language or 'en').toLowerCase()
-
+      # gaq - google analytics tracking code for this collection.
+      gaq: null
 
   # Book ToC Tree Model
   # =======
@@ -421,11 +422,14 @@ define ['exports', 'jquery', 'backbone', 'bookish/media-types', 'i18n!bookish/nl
   # BaseBook (Connexions Collection)
   # =======
   # Represents a "collection" in [Connexions](http://cnx.org) terminology and an `.opf` file in an EPUB
+  # gaq - google analytics tracking code for this collection.
+
   BaseBook = Deferrable.extend
     mediaType: 'application/vnd.org.cnx.collection'
     defaults:
       manifest: null
       title: 'Untitled Book'
+      gaq: null
 
     # Subclasses can provide a better Collection for storing Content items in a book
     # so the book can listen to changes.

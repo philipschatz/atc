@@ -6,8 +6,8 @@ define [
 
   _authenticated = false
 
-  return new (Backbone.Model.extend
-    url: '/api/me'
+  return new (class Session extends Backbone.Model
+    url: '/me'
 
     initialize: () ->
       @load()
@@ -15,7 +15,7 @@ define [
     load: () ->
       @fetch
         success: (model, response, options) =>
-          if response.id
+          if response.user_id
             # Logged in
 
             @set('user', response)

@@ -17,7 +17,7 @@ define [
 
   _loaded = $.Deferred()
 
-  return new (class AllContent extends Backbone.Collection
+  return new class Content extends Backbone.Collection
     url: '/api/content'
 
     initialize: () ->
@@ -27,11 +27,7 @@ define [
 
     model: (attrs, options) ->
       if attrs.mediaType
-        mediaType = attrs.mediaType
-        Medium = mediaTypes.type(mediaType)
-        # Include the `mediaType` in case models support multiple media types (like images).
-        #delete attrs.mediaType
-
+        Medium = mediaTypes.type(attrs.mediaType)
         return new Medium(attrs)
 
       throw 'You must pass in the model or set its mediaType when adding to the content collection.'
@@ -55,4 +51,3 @@ define [
 
     loading: () ->
       return _loaded.promise()
-  )()

@@ -9,7 +9,7 @@ define [
   'less!styles/main.less'
 ], ($, _, Backbone, Marionette, app, content, WorkspaceLayout) ->
 
-  return new class AppController extends Marionette.Controller
+  return new class Router extends Marionette.AppRouter
     # Show Workspace
     # -------
     # Show the workspace listing and update the URL
